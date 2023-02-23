@@ -1,32 +1,47 @@
-name: m2-actions-test
-on: [push]
+name: Magento Pipeline
+
+on:
+  push:
+    branches:
+      - main
+  pull_request:
+    branches:
+      - main
 
 jobs:
-  magento2-build:
+  build:
     runs-on: ubuntu-latest
-    container: ubuntu
-    name: 'm2 unit tests & build'
-    services:
-      mysql:
-        image: docker://mysql:8.0
-        env:
-          MYSQL_ROOT_PASSWORD: Root@123
-          MYSQL_DATABASE: mag245
-        ports:
-          - 3306:3306
-        options: --health-cmd="mysqladmin ping" --health-interval=10s --health-timeout=5s --health-retries=3
-      elasticsearch:
-        image: docker://elasticsearch:7.1.0
-        ports:
-          - 9200:9200
-        options: -e="discovery.type=single-node" --health-cmd="curl http://localhost:9200/_cluster/health" --health-interval=10s --health-timeout=5s --health-retries=10
+
     steps:
-    - uses: actions/checkout@v2
-    - name: 'this step will build an magento artifact'
-      if: always()
-      uses: GullsherChaudhary/mag245@main
-      env:
-        COMPOSER_AUTH: ${{secrets.COMPOSER_AUTH}}
-      with:
-        process: 'build'
-        elasticsearch: 1
+      - name: Checkout code
+        uses: actions/checkout@v2
+
+      - name: Install dependencies
+        run: composer install
+
+      - name: Run tests
+        run: phpunit
+
+      - name: Build and package
+        run: |
+          mkdir -p build
+          tar -czf build/app.tar.gz app
+
+      - name: Deploy to AWS
+        uses: GullsherChaudhary/mag245@main
+        with:
+          host: ${{ secrets.AWS_EC2_HOST }}
+          username: ${{ secrets.AWS_EC2_USERNAME }}
+          key: ${{ secrets.AWS_EC2_PRIVATE_KEY }}
+          script: |
+            cd /var/www/html
+            rm -rf *
+            tar -xzf /path/to/build/app.tar.gz
+
+      - name: execute magento commands
+        run: |
+          php bin/magento setup:upgrade
+          php bin/magento setup:di:compile
+          php bin/magento setup:static-content:deploy -f
+          php bin/magento indexer:reindex
+          php bin/magento cache:flush
